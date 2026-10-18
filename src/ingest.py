@@ -164,7 +164,16 @@ def embed_and_store(chunks):
         use_jsonb=True,
     )
     store.add_documents(chunks)
-    print(f"  [OK] Stored {len(chunks)} chunks in PostgreSQL with pgvector successfully!\n")
+    print(f"  [OK] Stored {len(chunks)} chunks in PostgreSQL with pgvector successfully!")
+
+    print("  Creating PostgreSQL GIN index for Full-Text Search...")
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS chunks_fts ON langchain_pg_embedding "
+            "USING GIN (to_tsvector('english', document));"
+        )
+        conn.commit()
+    print("  [OK] Full-Text GIN index created successfully!\n")
 
 
 def main():
