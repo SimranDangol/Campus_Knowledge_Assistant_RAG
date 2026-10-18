@@ -1,0 +1,10 @@
+{"question": "What is the minimum attendance to sit in exams?", "role": "student", "expected_answer": "70% (Attendance Policy 2025)", "expected_doc": "Attendance Policy 2025", "case_type": "outdated_vs_new"}
+{"question": "Is 75% attendance required?", "role": "student", "expected_answer": "No, 2025 policy says 70%", "expected_doc": "Attendance Policy 2025", "case_type": "outdated_vs_new"}
+{"question": "How are faculty grades moderated?", "role": "student", "expected_answer": "I don't have information on that", "expected_doc": "", "case_type": "restricted"}
+{"question": "How are faculty grades moderated?", "role": "professor", "expected_answer": "Second marker reviews any grade change over 10 marks", "expected_doc": "Grading Guidelines for Faculty", "case_type": "normal"}
+{"question": "What is the cafeteria timing?", "role": "student", "expected_answer": "I don't have information on that", "expected_doc": "", "case_type": "not_covered"}
+{"question": "What happens if attendance is below the minimum?", "role": "student", "expected_answer": "Student may be barred from exams (Attendance Policy 2025)", "expected_doc": "Attendance Policy 2025", "case_type": "normal"}
+{"question": "What is the grade moderation procedure?", "role": "admin", "expected_answer": "Second marker reviews grade changes over 10 marks", "expected_doc": "Grading Guidelines for Faculty", "case_type": "normal"}
+{"question": "Can a student see the grading guidelines?", "role": "student", "expected_answer": "I don't have information on that", "expected_doc": "", "case_type": "restricted"}
+{"question": "What was the attendance policy in 2023?", "role": "student", "expected_answer": "The previous attendance requirement was 75% (as stated in Attendance Policy 2025)", "expected_doc": "Attendance Policy 2025", "case_type": "historical_context"}
+{"question": "Who is the dean of the university?", "role": "professor", "expected_answer": "I don't have information on that", "expected_doc": "", "case_type": "not_covered"}
