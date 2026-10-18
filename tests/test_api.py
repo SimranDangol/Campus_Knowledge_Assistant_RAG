@@ -18,6 +18,14 @@ from src.main import app
 client = TestClient(app)
 
 
+def test_frontend_served():
+    """GET /app must return HTML with 200 OK."""
+    response = client.get("/app")
+    assert response.status_code == 200
+    assert "Campus Knowledge Assistant" in response.text
+    assert "text/html" in response.headers["content-type"]
+
+
 def test_unauthenticated_request_rejected():
     """Accessing /ask without a token must return 401."""
     response = client.post(

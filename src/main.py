@@ -14,7 +14,10 @@ Run with:  uv run uvicorn src.main:app --reload
 Docs at:   http://127.0.0.1:8000/docs
 """
 
+from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
@@ -27,6 +30,8 @@ from src.auth import (
 )
 from src.chain import CampusAnswer, ask
 
+FRONTEND_FILE = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
+
 # ── App init ────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Campus Knowledge Assistant",
@@ -35,6 +40,15 @@ app = FastAPI(
         "hybrid search, and JWT authentication."
     ),
     version="1.0.0",
+)
+
+# ── CORS Middleware ────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -69,8 +83,17 @@ def root():
         "service": "Campus Knowledge Assistant",
         "version": "1.0.0",
         "auth": "JWT (POST /token)",
+        "app": "/app",
         "docs": "/docs",
     }
+
+
+@app.get("/app", response_class=HTMLResponse)
+def serve_app():
+    """Serves the interactive web UI."""
+    if FRONTEND_FILE.exists():
+        return HTMLResponse(content=FRONTEND_FILE.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Frontend not found</h1>", status_code=404)
 
 
 @app.post("/token", response_model=Token)
