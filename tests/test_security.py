@@ -33,6 +33,24 @@ def test_professor_can_see_faculty_docs():
     )
 
 
+def test_professor_never_sees_admin_only():
+    """A professor must never see admin-only (access_level 3) documents."""
+    docs = retrieve("disciplinary committee penalties and sanctions", "professor")
+    for d in docs:
+        assert d.metadata["access_level"] <= 2, (
+            f"Professor retrieved an admin-only chunk: {d.metadata['doc_name']} "
+            f"(access_level={d.metadata['access_level']})"
+        )
+
+
+def test_admin_can_see_all_documents():
+    """An admin should be able to retrieve level 3 documents."""
+    docs = retrieve("disciplinary committee penalties and sanctions", "admin")
+    assert any(d.metadata["access_level"] == 3 for d in docs), (
+        "Admin could not retrieve disciplinary documents"
+    )
+
+
 def test_outdated_policy_never_returned():
     """Superseded policies (is_current=False) must never appear in results."""
     docs = retrieve("minimum attendance", "student")

@@ -35,29 +35,52 @@ CONN = DB_URL.replace("postgresql://", "postgresql+psycopg://", 1) if DB_URL.sta
 # - effective_date: used to determine which document is the newest
 # ---------------------------------------------------------------------------
 REGISTRY = {
+    "student_handbook.pdf": dict(
+        doc_name="Student Handbook",
+        doc_family="handbook",
+        effective_date="2024-08-01",
+        access_level=1,  # Everyone (students, faculty, admin)
+    ),
     "attendance_2023.pdf": dict(
         doc_name="Attendance Policy 2023",
         doc_family="attendance",
         effective_date="2023-01-01",
-        access_level=1,  # Students can read this
+        access_level=1,  # Superseded, hidden by is_current=False
     ),
     "attendance_2025.pdf": dict(
         doc_name="Attendance Policy 2025",
         doc_family="attendance",
         effective_date="2025-01-01",
-        access_level=1,  # Students can read this
+        access_level=1,  # Current attendance policy
+    ),
+    "fee_structure.pdf": dict(
+        doc_name="Fee Structure",
+        doc_family="fee",
+        effective_date="2024-07-01",
+        access_level=1,  # Everyone
+    ),
+    "exam_rules.pdf": dict(
+        doc_name="Exam Rules",
+        doc_family="exam",
+        effective_date="2024-09-01",
+        access_level=1,  # Everyone
     ),
     "grading_faculty.pdf": dict(
         doc_name="Grading Guidelines for Faculty",
         doc_family="grading",
         effective_date="2024-06-01",
-        access_level=2,  # ONLY Professors & Admins can read this
+        access_level=2,  # Professors & Admins only
+    ),
+    "disciplinary_report.pdf": dict(
+        doc_name="Disciplinary Committee Report",
+        doc_family="disciplinary",
+        effective_date="2024-11-01",
+        access_level=3,  # Admins only
     ),
 }
 
 # Paths to folders
 DOCS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs")
-CHROMA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
 
 
 def load_and_chunk():
@@ -123,7 +146,14 @@ def embed_and_store(chunks):
     Step 3: Convert text to mathematical vectors (embeddings)
     and save them into PostgreSQL + pgvector.
     """
-    print("\n  Loading embedding model (BAAI/bge-small-en-v1.5)...")
+    import psycopg
+
+    print("\n  Resetting collection in PostgreSQL...")
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("DROP TABLE IF EXISTS langchain_pg_embedding, langchain_pg_collection CASCADE;")
+        conn.commit()
+
+    print("  Loading embedding model (BAAI/bge-small-en-v1.5)...")
     emb = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
     print(f"  Storing {len(chunks)} chunks in PostgreSQL collection 'campus_docs'...")
