@@ -15,10 +15,17 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from langchain_postgres import PGVector
+
+# Database connection
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:pass@localhost:5432/postgres")
+CONN = DB_URL.replace("postgresql://", "postgresql+psycopg://", 1) if DB_URL.startswith("postgresql://") else DB_URL
 
 # ---------------------------------------------------------------------------
 # 1. Document Registry
@@ -114,21 +121,20 @@ def mark_current(chunks):
 def embed_and_store(chunks):
     """
     Step 3: Convert text to mathematical vectors (embeddings)
-    and save them into Chroma DB on your computer.
+    and save them into PostgreSQL + pgvector.
     """
     print("\n  Loading embedding model (BAAI/bge-small-en-v1.5)...")
-    # This model turns sentences into 384 numbers representing their meaning
     emb = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
-    print(f"  Storing {len(chunks)} chunks in Chroma at {CHROMA_DIR}...")
-    # Saves vectors, text, and metadata directly to the chroma_db folder
-    Chroma.from_documents(
-        chunks,
-        emb,
-        collection_name="campus",
-        persist_directory=CHROMA_DIR,
+    print(f"  Storing {len(chunks)} chunks in PostgreSQL collection 'campus_docs'...")
+    store = PGVector(
+        embeddings=emb,
+        collection_name="campus_docs",
+        connection=CONN,
+        use_jsonb=True,
     )
-    print(f"  [OK] Stored {len(chunks)} chunks successfully!\n")
+    store.add_documents(chunks)
+    print(f"  [OK] Stored {len(chunks)} chunks in PostgreSQL with pgvector successfully!\n")
 
 
 def main():

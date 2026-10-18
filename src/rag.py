@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from langchain_postgres import PGVector
 import os
 import sys
 
@@ -36,16 +36,20 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 ROLE_LEVEL = {"student": 1, "professor": 2, "admin": 3}
 NO_INFO = "I don't have information on that."
-CHROMA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db")
+
+# Database connection
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:pass@localhost:5432/postgres")
+CONN = DB_URL.replace("postgresql://", "postgresql+psycopg://", 1) if DB_URL.startswith("postgresql://") else DB_URL
 
 # ---------------------------------------------------------------------------
-# Load embedding model and connect to Chroma database (loaded once at startup)
+# Load embedding model and connect to PostgreSQL + pgvector
 # ---------------------------------------------------------------------------
 emb = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
-store = Chroma(
-    collection_name="campus",
-    embedding_function=emb,
-    persist_directory=CHROMA_DIR,
+store = PGVector(
+    embeddings=emb,
+    collection_name="campus_docs",
+    connection=CONN,
+    use_jsonb=True,
 )
 
 # ---------------------------------------------------------------------------
