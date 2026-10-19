@@ -12,7 +12,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from typing import List, Optional
+from functools import lru_cache
+from typing import Any, List, Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -40,16 +41,6 @@ CONN = (
     else DB_URL
 )
 
-# Connect to PostgreSQL + pgvector
-emb = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
-store = PGVector(
-    embeddings=emb,
-    collection_name="campus_docs",
-    connection=CONN,
-    use_jsonb=True,
-)
-
-
 class Citation(BaseModel):
     document: str
     page: int
@@ -76,9 +67,40 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-model_name = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
-llm = ChatGroq(model=model_name, temperature=0)
-answer_chain = prompt | llm.with_structured_output(CampusAnswer)
+@lru_cache(maxsize=1)
+def get_embeddings() -> HuggingFaceEmbeddings:
+    return HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+
+
+@lru_cache(maxsize=1)
+def get_store() -> PGVector:
+    return PGVector(
+        embeddings=get_embeddings(),
+        collection_name="campus_docs",
+        connection=CONN,
+        use_jsonb=True,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_llm() -> ChatGroq:
+    model_name = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+    return ChatGroq(model=model_name, temperature=0)
+
+
+@lru_cache(maxsize=1)
+def get_answer_chain():
+    return prompt | get_llm().with_structured_output(CampusAnswer)
+
+
+class _LazyStore:
+    """Keep the historical ``store`` export without loading models at import time."""
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(get_store(), name)
+
+
+store = _LazyStore()
 
 
 def format_docs(docs):
@@ -91,20 +113,20 @@ def format_docs(docs):
 
 def retrieve(question: str, role: str, k: int = 5):
     """Retrieve documents using the hybrid EnsembleRetriever."""
-    return build_retriever(role, store, k=k).invoke(question)
+    return build_retriever(role, get_store(), k=k).invoke(question)
 
 
 def ask(question: str, role: str, vector_store=None, config: Optional[dict] = None):
     """
     Execute Hybrid Retrieval + Groq structured output answer.
     """
-    target_store = vector_store or store
+    target_store = vector_store if vector_store is not None else get_store()
     docs = build_retriever(role, target_store).invoke(question)
 
     if not docs:
         return CampusAnswer(found=False, answer=NO_INFO, citations=[]), []
 
-    result = answer_chain.invoke(
+    result = get_answer_chain().invoke(
         {"context": format_docs(docs), "question": question},
         config=config,
     )
