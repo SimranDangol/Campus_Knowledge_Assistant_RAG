@@ -15,11 +15,13 @@ Docs at:   http://127.0.0.1:8000/docs
 """
 
 from pathlib import Path
+import os
+
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from src.auth import (
     Token,
@@ -28,7 +30,8 @@ from src.auth import (
     create_access_token,
     get_current_user,
 )
-from src.chain import CampusAnswer, ask
+from src.chain import Citation, ask
+from src.graph import ask_graph
 
 FRONTEND_FILE = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
 
@@ -45,7 +48,14 @@ app = FastAPI(
 # ── CORS Middleware ────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:8080,http://127.0.0.1:8080",
+        ).split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,12 +67,25 @@ class QuestionRequest(BaseModel):
     """
     JSON body for /ask:
     {
-        "question": "What is the minimum attendance?"
+        "question": "What is the minimum attendance?",
+        "use_graph": false
     }
     The role is automatically extracted from the JWT token.
     """
 
-    question: str
+    question: str = Field(min_length=1, max_length=2000)
+    use_graph: bool = Field(
+        default=False,
+        description="Whether to execute query through Upgrade 11 LangGraph state machine",
+    )
+
+    @field_validator("question")
+    @classmethod
+    def normalize_question(cls, value: str) -> str:
+        question = value.strip()
+        if not question:
+            raise ValueError("Question must not be blank")
+        return question
 
 
 class AskResponse(BaseModel):
@@ -70,9 +93,13 @@ class AskResponse(BaseModel):
 
     found: bool
     answer: str
-    citations: list
+    citations: list[Citation]
     role: str
     chunks_retrieved: int
+    pipeline: str = Field(
+        default="chain",
+        description="Execution engine ('chain' or 'langgraph')",
+    )
 
 
 # ── Routes ──────────────────────────────────────────────────────────────
@@ -94,6 +121,24 @@ def serve_app():
     if FRONTEND_FILE.exists():
         return HTMLResponse(content=FRONTEND_FILE.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Frontend not found</h1>", status_code=404)
+
+
+def _langfuse_config() -> dict | None:
+    keys = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
+    configured = [bool(os.getenv(key)) for key in keys]
+    if not any(configured):
+        return None
+    if not all(configured):
+        raise RuntimeError("Set both Langfuse public and secret keys to enable tracing")
+
+    try:
+        from langfuse.langchain import CallbackHandler
+    except ImportError as exc:
+        raise RuntimeError(
+            "Langfuse tracing is configured but the observability extra is not installed"
+        ) from exc
+
+    return {"callbacks": [CallbackHandler()]}
 
 
 @app.post("/token", response_model=Token)
@@ -134,13 +179,51 @@ async def ask_endpoint(
 
     Returns a structured answer with citations and retrieval metadata.
     """
-    result, docs = ask(q.question, current_user.role)
+    if q.use_graph:
+        result, docs = ask_graph(
+            q.question,
+            current_user.role,
+            config=_langfuse_config(),
+        )
+        pipeline_name = "langgraph"
+    else:
+        result, docs = ask(
+            q.question,
+            current_user.role,
+            config=_langfuse_config(),
+        )
+        pipeline_name = "chain"
+
     return AskResponse(
         found=result.found,
         answer=result.answer,
         citations=[c.model_dump() for c in result.citations],
         role=current_user.role,
         chunks_retrieved=len(docs),
+        pipeline=pipeline_name,
+    )
+
+
+@app.post("/ask/graph", response_model=AskResponse)
+async def ask_graph_endpoint(
+    q: QuestionRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upgrade 11: Dedicated endpoint executing queries via the LangGraph state machine.
+    """
+    result, docs = ask_graph(
+        q.question,
+        current_user.role,
+        config=_langfuse_config(),
+    )
+    return AskResponse(
+        found=result.found,
+        answer=result.answer,
+        citations=[c.model_dump() for c in result.citations],
+        role=current_user.role,
+        chunks_retrieved=len(docs),
+        pipeline="langgraph",
     )
 
 

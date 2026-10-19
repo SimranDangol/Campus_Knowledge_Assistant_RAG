@@ -380,6 +380,14 @@
         </div>
       </div>
 
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.82rem; color: var(--text-muted);">
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none;">
+          <input type="checkbox" id="useGraphToggle" style="cursor: pointer; accent-color: var(--primary);" />
+          <span>Enable <strong>LangGraph Agentic State Machine</strong> (Upgrade 11)</span>
+        </label>
+        <span style="font-size: 0.75rem; background: rgba(59,130,246,0.15); color: #93c5fd; padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(59,130,246,0.3);">Retrieve ➔ Grade/Route ➔ Answer</span>
+      </div>
+
       <div class="input-group">
         <input type="text" id="questionInput" placeholder="Ask a question about campus policies, fees, or rules..." onkeydown="if(event.key==='Enter') submitQuery()" />
         <button class="ask-btn" id="askBtn" onclick="submitQuery()">
@@ -405,6 +413,7 @@
 
       <div class="meta-bar">
         <div id="metaRole">Role: Student</div>
+        <div id="metaEngine">Engine: Chain</div>
         <div id="metaChunks">Retrieval: 5 hybrid chunks (Vector + FTS)</div>
         <div id="metaTime">Time: 0.4s</div>
       </div>
@@ -472,18 +481,23 @@
       btn.disabled = true;
       btnText.textContent = 'Searching...';
       btnSpinner.style.display = 'inline-block';
+      resultBox.style.display = 'none'; // hide stale results while loading
 
       const startTime = performance.now();
 
       try {
         const token = await ensureToken();
+        const useGraph = document.getElementById('useGraphToggle')?.checked || false;
         const res = await fetch(`${API_URL}/ask`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({ question: q })
+          body: JSON.stringify({
+            question: q,
+            use_graph: useGraph
+          })
         });
 
         if (!res.ok) {
@@ -515,8 +529,10 @@
           citationsSec.style.display = 'block';
           data.citations.forEach(c => {
             const tag = document.createElement('div');
+            const documentName = document.createElement('span');
             tag.className = 'citation-tag';
-            tag.innerHTML = `📄 <span>${c.document}</span> (Page ${c.page})`;
+            documentName.textContent = c.document;
+            tag.append('📄 ', documentName, ` (Page ${c.page})`);
             citationsList.appendChild(tag);
           });
         } else {
@@ -525,6 +541,7 @@
 
         // Metadata
         document.getElementById('metaRole').textContent = `Authenticated: ${data.role.toUpperCase()}`;
+        document.getElementById('metaEngine').textContent = `Engine: ${(data.pipeline || (useGraph ? 'langgraph' : 'chain')).toUpperCase()}`;
         document.getElementById('metaChunks').textContent = `Fused Search: ${data.chunks_retrieved} documents`;
         document.getElementById('metaTime').textContent = `Latency: ${elapsed}s`;
 

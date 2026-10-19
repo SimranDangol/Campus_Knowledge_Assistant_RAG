@@ -27,7 +27,11 @@ from pydantic import BaseModel
 load_dotenv()
 
 # ── Config ──────────────────────────────────────────────────────────────
-SECRET_KEY = os.getenv("JWT_SECRET", "campus-rag-dev-secret-change-in-prod")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
+SECRET_KEY = os.getenv("JWT_SECRET")
+if not SECRET_KEY and ENVIRONMENT in {"production", "prod"}:
+    raise RuntimeError("JWT_SECRET must be set when ENVIRONMENT is production")
+SECRET_KEY = SECRET_KEY or "campus-rag-dev-secret-change-in-prod"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "60"))
 

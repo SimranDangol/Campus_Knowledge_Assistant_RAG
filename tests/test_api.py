@@ -13,6 +13,8 @@ Tests cover:
 """
 
 from fastapi.testclient import TestClient
+from src.chain import CampusAnswer, Citation
+from src import main
 from src.main import app
 
 client = TestClient(app)
@@ -85,13 +87,24 @@ def test_user_me_profile():
     assert data["role"] == "professor"
 
 
-def test_student_cannot_access_faculty_doc():
-    """Student asking about faculty grading moderation must receive found=False."""
+def test_student_role_is_used_for_ask(monkeypatch):
+    """Student JWT role is passed to RAG without requiring external services."""
     token_resp = client.post(
         "/token",
         data={"username": "alice", "password": "studentpass"},
     )
     token = token_resp.json()["access_token"]
+    calls = []
+
+    def fake_ask(question, role, config=None):
+        calls.append((question, role, config))
+        return CampusAnswer(
+            found=False,
+            answer="I don't have information on that.",
+            citations=[],
+        ), []
+
+    monkeypatch.setattr(main, "ask", fake_ask)
 
     response = client.post(
         "/ask",
@@ -102,15 +115,29 @@ def test_student_cannot_access_faculty_doc():
     data = response.json()
     assert data["role"] == "student"
     assert data["found"] is False
+    assert len(calls) == 1
+    assert calls[0][0] == "How are faculty grades moderated?"
+    assert calls[0][1] == "student"
 
 
-def test_professor_can_access_faculty_doc():
-    """Professor asking about faculty grading moderation gets found=True and citations."""
+def test_professor_role_is_used_for_ask(monkeypatch):
+    """Professor JWT role is passed to RAG and its citation is returned."""
     token_resp = client.post(
         "/token",
         data={"username": "bob", "password": "profpass"},
     )
     token = token_resp.json()["access_token"]
+    calls = []
+
+    def fake_ask(question, role, config=None):
+        calls.append((question, role, config))
+        return CampusAnswer(
+            found=True,
+            answer="A second marker reviews significant grade changes.",
+            citations=[Citation(document="Grading Guidelines for Faculty", page=2)],
+        ), []
+
+    monkeypatch.setattr(main, "ask", fake_ask)
 
     response = client.post(
         "/ask",
@@ -123,3 +150,64 @@ def test_professor_can_access_faculty_doc():
     assert data["found"] is True
     assert len(data["citations"]) > 0
     assert any(c["document"] == "Grading Guidelines for Faculty" for c in data["citations"])
+    assert len(calls) == 1
+    assert calls[0][0] == "How are faculty grades moderated?"
+    assert calls[0][1] == "professor"
+
+
+def test_empty_question_is_rejected():
+    token_resp = client.post(
+        "/token",
+        data={"username": "alice", "password": "studentpass"},
+    )
+    response = client.post(
+        "/ask",
+        headers={"Authorization": f"Bearer {token_resp.json()['access_token']}"},
+        json={"question": "  "},
+    )
+    assert response.status_code == 422
+
+
+def test_ask_graph_endpoint(monkeypatch):
+    """Calling /ask/graph routes through LangGraph and marks pipeline as langgraph."""
+    token_resp = client.post(
+        "/token",
+        data={"username": "alice", "password": "studentpass"},
+    )
+    token = token_resp.json()["access_token"]
+    graph_called = False
+
+    def fake_ask_graph(question, role, config=None):
+        nonlocal graph_called
+        graph_called = True
+        return CampusAnswer(
+            found=True,
+            answer="Answered via LangGraph state machine.",
+            citations=[Citation(document="Student Handbook", page=1)],
+        ), [object()]
+
+    monkeypatch.setattr(main, "ask_graph", fake_ask_graph)
+
+    # Test /ask/graph endpoint
+    resp = client.post(
+        "/ask/graph",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"question": "What is the policy?"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["pipeline"] == "langgraph"
+    assert data["answer"] == "Answered via LangGraph state machine."
+    assert graph_called is True
+
+    # Test /ask with use_graph=True
+    graph_called = False
+    resp2 = client.post(
+        "/ask",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"question": "What is the policy?", "use_graph": True},
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["pipeline"] == "langgraph"
+    assert graph_called is True
