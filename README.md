@@ -1,6 +1,6 @@
-# 🎓 Campus Knowledge Assistant (Enterprise RAG)
+# 🎓 Campus Knowledge Assistant (Full-Version RAG Demo)
 
-> **A production-grade Retrieval-Augmented Generation (RAG) assistant over university policy documents featuring PostgreSQL PGVector semantic search, Full-Text GIN keyword search, cryptographically enforced Role-Based Access Control (RBAC), temporal policy versioning, and JWT authentication.**
+> **A full-version Retrieval-Augmented Generation (RAG) demo over university policy documents featuring PostgreSQL PGVector semantic search, Full-Text GIN keyword search, Role-Based Access Control (RBAC), temporal policy versioning, and JWT authentication.**
 
 ---
 
@@ -9,20 +9,33 @@
 1. **Exact-Match & Semantic Hybrid Retrieval**:
    - Embeddings understand high-level concepts but frequently miss exact alphanumeric course codes or form IDs.
    - We combine **PGVector cosine similarity** (`BAAI/bge-small-en-v1.5`) with **PostgreSQL Full-Text Search** (`to_tsvector` + GIN index + `ts_rank`) fused via **Reciprocal Rank Fusion (RRF)**.
-   - Accurately answers both concept questions and exact alphanumeric queries like *"What is Form F-12 used for?"* or *"Prerequisites for CS-301"*.
+   - A BGE cross-encoder reranks the filtered hybrid candidates before they reach the answer model.
+   - Handles concept questions and exact alphanumeric queries like *"What is Form F-12 used for?"* or *"Prerequisites for CS-301"*.
 
-2. **Cryptographically Enforced Role-Based Access Control (RBAC)**:
+2. **Table-Aware PDF Ingestion**:
+   - Docling's `HybridChunker` preserves table structure and page provenance for citations.
+   - Every registered document must parse successfully before the collection is replaced.
+
+3. **Cryptographically Enforced Role-Based Access Control (RBAC)**:
    - Permissions are embedded in signed JWT claims (`HS256`), preventing role impersonation.
    - Permission filters (`access_level <= user_level AND is_current = True`) execute **directly inside the database engine** for both vector and keyword queries.
    - **Zero-trust security guarantee**: Restricted chunks never leave the database, never reach memory, and never leak into LLM prompts.
 
-3. **Temporal Policy Versioning ("Newest Policy Wins")**:
+4. **Temporal Policy Versioning ("Newest Policy Wins")**:
    - Outdated documents are **never deleted** (preserving audit history), but flagged with `is_current = false` during ingestion.
    - Queries automatically retrieve only active policies (e.g. Attendance Policy 2025's 70% threshold cleanly overrides Attendance Policy 2023's 75% rule).
 
-4. **Hallucination Prevention & Refusal Shortcut**:
+5. **Hallucination Prevention & Refusal Shortcut**:
    - Strict system prompt with Pydantic structured output (`CampusAnswer`).
    - Short-circuit mechanism: if zero chunks pass the RBAC/version filter, the pipeline **skips the LLM entirely**, saving API costs and guaranteeing zero hallucinations.
+
+6. **Optional Tracing & Quality Evaluation**:
+   - Langfuse callbacks trace API requests when configured.
+   - Ragas metrics are available through the `evaluation` extra; they are not run by the default benchmark.
+
+7. **Agentic State Machine with LangGraph (Upgrade 11 - Stretch Goal)**:
+   - Dynamic cyclic agent graph (`src/graph.py`) with explicit State: `retrieve` ➔ `grade/route` ➔ `answer` or `refuse`.
+   - Dedicated `/ask/graph` endpoint and UI toggle for executing queries via the compiled state machine.
 
 ---
 
@@ -51,7 +64,7 @@ API Docs: http://127.0.0.1:8080/docs
 [University Policy PDFs] 
          │
          ▼
-[PyPDF / Docling Parser] ──► [RecursiveCharacterTextSplitter] (700 char, 100 overlap)
+[Docling + HybridChunker] ──► [Page-Provenance, Table-Aware Chunks]
                                       │
                                       ▼
                       [Metadata Registry & Versioning Engine]
@@ -81,6 +94,8 @@ API Docs: http://127.0.0.1:8080/docs
                  └──────────────────────────────┬──────────────────────────────┘
                                                 ▼
                                     [EnsembleRetriever (RRF)]
+                                                │
+                                    [BGE Cross-Encoder Reranker]
                                                 │
                                     ┌───────────┴───────────┐
                         (Docs Found?)                     (No Docs?)
@@ -117,40 +132,36 @@ Universities do not destroy outdated policies; historical records must be retain
 ### 4. Why Pydantic Structured Output with Pre-LLM Shortcut
 If the hybrid retriever returns 0 chunks (either because the topic doesn't exist or because the user's role was blocked), the pipeline short-circuits and immediately returns `CampusAnswer(found=False, answer="I don't have information on that.", citations=[])`. This cuts latency, saves LLM API costs, and prevents hallucinations.
 
+### 5. Why LangGraph Agentic Workflow (Upgrade 11)
+In production RAG systems, fixed linear chains struggle to handle multi-step reasoning, conditional routing, and self-correction. LangGraph models the pipeline as a formal State Graph (`AgentState: {question, role, docs, result}`):
+```
+[User Query] ──► (Retrieve Node) ──► (Grade / Route) ──┬──► [Docs Found?] ──► (Answer Node) ──► END
+                                                       │
+                                                       └──► [No Docs?]    ──► (Refuse Node) ──► END
+```
+This decouples retrieval evaluation from generation, ensuring refusal logic is transparently testable as a deterministic state transition.
+
 ---
 
 ## 📊 Benchmark & Evaluation Scorecard
 
 ### 1. 50-Question Benchmark Dataset (`eval/questions.jsonl`)
-The system was benchmarked across 50 questions spanning all 6 case categories:
+The dataset contains 50 questions across all 6 case categories:
 
-| Category | Description | Sample Query | Result |
+| Category | Description | Sample Query | Questions |
 |---|---|---|:---:|
-| `outdated_vs_new` | Superseded policy disambiguation | *"What is the minimum attendance to sit in exams?"* | **100% (8/8)** |
-| `restricted` | RBAC isolation across student/prof/admin | *"How are faculty grades moderated?" (Student)* | **100% (10/10)** |
-| `exact_match` | Alphanumeric form codes & course codes | *"What is Form F-12 used for?"* | **100% (8/8)** |
-| `table` | Multi-column fee structures | *"What is the fee for B.Tech CSE Semester 1?"* | **100% (8/8)** |
-| `normal` | General campus policy and exam rules | *"What happens if a student arrives 20m late?"* | **100% (8/8)** |
-| `not_covered` | Out-of-domain refusal verification | *"What is the cafeteria lunch timing?"* | **100% (8/8)** |
-| **OVERALL** | **Full 50-Question Benchmark** | — | **100% (50/50)** |
+| `outdated_vs_new` | Superseded policy disambiguation | *"What is the minimum attendance to sit in exams?"* | 8 |
+| `restricted` | RBAC isolation across student/prof/admin | *"How are faculty grades moderated?" (Student)* | 10 |
+| `exact_match` | Alphanumeric form codes & course codes | *"What is Form F-12 used for?"* | 8 |
+| `table` | Multi-column fee structures | *"What is the fee for B.Tech CSE Semester 1?"* | 8 |
+| `normal` | General campus policy and exam rules | *"What happens if a student arrives 20m late?"* | 8 |
+| `not_covered` | Out-of-domain refusal verification | *"What is the cafeteria lunch timing?"* | 8 |
+| **TOTAL** | **50 questions** | Run `src/evaluate.py` to measure this checkout | **50** |
+
+The default runner reports refusal, expected-document citation, and expected-answer key-term checks; these are a lightweight regression signal, not a substitute for judged answer quality. Add `--ragas` to collect faithfulness, answer relevance, context precision, and context recall scores. No benchmark scores are claimed here until run against a configured database and model API.
 
 ### 2. Automated Test Suite (`pytest`)
-**13/13 passing tests** running in CI/local:
-- `tests/test_security.py` (5 tests):
-  - `test_student_never_sees_faculty_docs`
-  - `test_professor_can_see_faculty_docs`
-  - `test_professor_never_sees_admin_only`
-  - `test_admin_can_see_all_documents`
-  - `test_outdated_policy_never_returned`
-- `tests/test_api.py` (8 tests):
-  - `test_frontend_served`
-  - `test_unauthenticated_request_rejected` (401)
-  - `test_invalid_token_rejected` (401)
-  - `test_login_success` (OAuth2 JWT)
-  - `test_login_wrong_credentials` (401)
-  - `test_user_me_profile`
-  - `test_student_cannot_access_faculty_doc` (RBAC)
-  - `test_professor_can_access_faculty_doc` (RBAC)
+Tests cover API authentication and role propagation, SQL-level permission/version filters, version selection, Docling page provenance, and benchmark scoring. The unit tests do not require Docker or call the LLM.
 
 ---
 
@@ -160,7 +171,7 @@ The system was benchmarked across 50 questions spanning all 6 case categories:
 ```bash
 git clone https://github.com/SimranDangol/Campus_Knowledge_Assistant_RAG.git
 cd Campus_Knowledge_Assistant_RAG
-uv sync
+uv sync --extra observability
 ```
 
 ### 2. Configure Environment (`.env`)
@@ -169,6 +180,11 @@ GROQ_API_KEY="your-groq-api-key"
 DATABASE_URL="postgresql://postgres:pass@localhost:5432/postgres"
 JWT_SECRET="campus-rag-dev-secret-change-in-prod"
 ```
+For production, set a unique `JWT_SECRET` and `ENVIRONMENT=production`. Optional
+settings include `RERANKER_ENABLED=false` to disable reranking,
+`RERANKER_MODEL`, `CORS_ORIGINS`, and the three `LANGFUSE_*` variables.
+Reranking defaults on and downloads its model on the first retrieval;
+Langfuse tracing is enabled only when both keys are set.
 
 ### 3. Start PostgreSQL with pgvector (Docker)
 ```bash
@@ -177,17 +193,22 @@ docker run -d --name pgvector -e POSTGRES_PASSWORD=pass -p 5432:5432 pgvector/pg
 
 ### 4. Ingest Documents & Build GIN Index
 ```bash
-uv run python src/generate_pdfs.py
 uv run python src/ingest.py
 ```
+Run `uv run python src/generate_pdfs.py` only when you want to recreate the
+sample PDFs. Ingestion validates that all registered PDFs exist and replaces
+only the `campus_docs` collection.
 
 ### 5. Run Tests & Evaluation
 ```bash
-# Run 13/13 automated security & API tests
+# Run local API, retrieval-security, and evaluation unit tests
 uv run pytest -v
 
-# Run the 50-question evaluation benchmark
+# Run the 50-question reference-check benchmark (requires DB and Groq access)
 uv run python src/evaluate.py
+
+# Optional Ragas quality evaluation (requires the evaluation extra)
+uv run --extra evaluation python src/evaluate.py --ragas
 ```
 
 ### 6. Start the Application & Web UI
@@ -203,8 +224,11 @@ Open **[http://127.0.0.1:8080/app](http://127.0.0.1:8080/app)** in your browser.
 * **Vector Database**: PostgreSQL 16 + `pgvector` (`langchain-postgres`)
 * **Keyword Search**: PostgreSQL Full-Text Search (`tsvector` + GIN Index)
 * **Hybrid Fusion**: `langchain-classic` (`EnsembleRetriever` with RRF)
+* **Reranking**: Sentence Transformers BGE cross-encoder
+* **PDF Parsing**: Docling `HybridChunker` with page provenance
 * **Embedding Model**: `BAAI/bge-small-en-v1.5` (via `langchain-huggingface`)
 * **LLM**: Groq API (`qwen/qwen3.8-27b`) with Pydantic structured outputs
 * **API & Security**: FastAPI, OAuth2 Password Bearer, JWT (`python-jose`), `bcrypt`
 * **Frontend**: Vanilla HTML5, CSS3 Glassmorphic Design, ES6 JavaScript
 * **Testing & Benchmarking**: Pytest, Custom 50-question benchmark runner
+* **Optional Observability / Evaluation**: Langfuse and Ragas extras

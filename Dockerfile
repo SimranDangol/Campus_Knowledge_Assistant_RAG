@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 
 # Install production dependencies
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra observability
 
 # Copy application source code and frontend
 COPY src ./src
